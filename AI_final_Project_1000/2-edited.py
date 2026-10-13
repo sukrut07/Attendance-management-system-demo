@@ -3,13 +3,14 @@ import os
 import csv
 import time
 import pickle
+import glob
 from datetime import datetime
 
 from PyQt5.QtCore import Qt, QAbstractTableModel
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QMainWindow, QLabel, QPushButton,
     QLineEdit, QGridLayout, QVBoxLayout, QHBoxLayout, QMessageBox,
-    QTableView
+    QTableView, QHeaderView, QComboBox
 )
 from PyQt5.QtGui import QFont, QIcon, QPixmap, QCursor
 import cv2
@@ -79,7 +80,6 @@ def get_pixmap_or_fallback(file_path, fallback_path=None):
         return QPixmap(file_path)
     if fallback_path and os.path.exists(fallback_path):
         return QPixmap(fallback_path)
-    # Blank 100x100 pixmap
     blank = QPixmap(100, 100)
     blank.fill(Qt.transparent)
     return blank
@@ -98,22 +98,22 @@ class HomePage(QWidget):
         self.initUI()
 
     def open1(self):
-        self.child_window = SecondPage()
+        self.child_window = SecondPage(parent_home=self)
         self.child_window.show()
         self.hide()
 
     def open4(self):
-        self.child_window = ThirdPage()
+        self.child_window = ThirdPage(parent_home=self)
         self.child_window.show()
         self.hide()
 
     def open5(self):
-        self.child_window = FourthPage()
+        self.child_window = FourthPage(parent_home=self)
         self.child_window.show()
         self.hide()
 
     def open8(self):
-        self.child_window = FifthPage()
+        self.child_window = FifthPage(parent_home=self)
         self.child_window.show()
         self.hide()
 
@@ -195,8 +195,9 @@ class HomePage(QWidget):
 
 
 class SecondPage(QWidget):
-    def __init__(self):
+    def __init__(self, parent_home=None):
         super(SecondPage, self).__init__()
+        self.parent_home = parent_home
         self.setWindowTitle("ATTENDANCE SYSTEM - Register Student")
         self.setFixedWidth(1000)
         self.setStyleSheet("background: #FFFFFF;")
@@ -206,14 +207,19 @@ class SecondPage(QWidget):
         self.child_window = None
         self.initUI()
 
-    def open2(self):
-        self.child_window = S2_1()
+    def closeEvent(self, event):
+        if self.parent_home:
+            self.parent_home.show()
+        event.accept()
+
+    def open2(self, student_info):
+        self.child_window = S2_1(parent_home=self.parent_home, student_info=student_info)
         self.child_window.show()
         self.hide()
 
     def open_home(self):
-        self.child_window = HomePage()
-        self.child_window.show()
+        if self.parent_home:
+            self.parent_home.show()
         self.hide()
 
     def initUI(self):
@@ -292,7 +298,6 @@ class SecondPage(QWidget):
             QMessageBox.warning(self, "Missing Information", "All fields (First Name, Last Name, Roll Number) are required!")
             return
 
-        # Append to STUDENTS.csv
         file_exists = os.path.exists(STUDENTS_CSV)
         with open(STUDENTS_CSV, "a", newline="", encoding="utf-8") as temp:
             writer = csv.writer(temp)
@@ -300,12 +305,14 @@ class SecondPage(QWidget):
                 writer.writerow(["ROLL NO.", "FIRST NAME", "LAST NAME"])
             writer.writerow([rno, fname, lname])
 
-        self.open2()
+        self.open2((rno, fname, lname))
 
 
 class S2_1(QWidget):
-    def __init__(self):
+    def __init__(self, parent_home=None, student_info=None):
         super(S2_1, self).__init__()
+        self.parent_home = parent_home
+        self.student_info = student_info
         self.setWindowTitle("ATTENDANCE SYSTEM - Capture Images")
         self.setFixedWidth(1000)
         self.setStyleSheet("background: #FFFFFF;")
@@ -315,9 +322,14 @@ class S2_1(QWidget):
         self.child_window = None
         self.initUI()
 
+    def closeEvent(self, event):
+        if self.parent_home:
+            self.parent_home.show()
+        event.accept()
+
     def open3(self):
-        self.child_window = HomePage()
-        self.child_window.show()
+        if self.parent_home:
+            self.parent_home.show()
         self.hide()
 
     def initUI(self):
@@ -361,29 +373,28 @@ class S2_1(QWidget):
         grid.addWidget(self.button6, 4, 0)
 
     def take_image(self):
-        # Read the latest student from STUDENTS.csv
-        if not os.path.exists(STUDENTS_CSV):
+        roll_no = None
+        student_name = None
+
+        if self.student_info:
+            roll_no, fname, lname = self.student_info
+            student_name = f"{fname} {lname}".strip()
+        elif os.path.exists(STUDENTS_CSV):
+            rows = []
+            with open(STUDENTS_CSV, mode='r', newline='', encoding='utf-8') as f:
+                for r in csv.reader(f):
+                    if r:
+                        rows.append(r)
+            data_rows = [r for r in rows if r[0] != "ROLL NO."]
+            if data_rows:
+                last_student = data_rows[-1]
+                roll_no = last_student[0]
+                student_name = f"{last_student[1]} {last_student[2]}".strip()
+
+        if not student_name or not roll_no:
             QMessageBox.warning(self, "Error", "No student details found! Please enter details first.")
             return
 
-        rows = []
-        with open(STUDENTS_CSV, mode='r', newline='', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            for r in reader:
-                if r:
-                    rows.append(r)
-
-        # Filter out header if present
-        data_rows = [r for r in rows if r[0] != "ROLL NO."]
-        if not data_rows:
-            QMessageBox.warning(self, "Error", "No student details found in file! Please enter details first.")
-            return
-
-        last_student = data_rows[-1]
-        roll_no = last_student[0]
-        student_name = f"{last_student[1]} {last_student[2]}".strip()
-
-        # Load Haar Cascade
         facedetect = cv2.CascadeClassifier(HAAR_CASCADE_PATH)
         if facedetect.empty():
             QMessageBox.critical(self, "Error", f"Failed to load Haar Cascade from {HAAR_CASCADE_PATH}")
@@ -401,13 +412,21 @@ class S2_1(QWidget):
         while True:
             ret, frame = video.read()
             if not ret:
-                break
+                continue
 
             grey = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = facedetect.detectMultiScale(grey, 1.3, 5)
 
             for (x, y, w, h) in faces:
-                crop_img = frame[y:y+h, x:x+w, :]
+                y_start = max(0, y)
+                y_end = min(frame.shape[0], y + h)
+                x_start = max(0, x)
+                x_end = min(frame.shape[1], x + w)
+
+                crop_img = frame[y_start:y_end, x_start:x_end, :]
+                if crop_img.size == 0 or crop_img.shape[0] == 0 or crop_img.shape[1] == 0:
+                    continue
+
                 resized_img = cv2.resize(crop_img, (50, 50))
                 if len(faces_data) < total_samples and i % 10 == 0:
                     faces_data.append(resized_img)
@@ -415,7 +434,7 @@ class S2_1(QWidget):
 
                 cv2.putText(frame, f"Samples: {len(faces_data)}/{total_samples}", (30, 50),
                             cv2.FONT_HERSHEY_COMPLEX, 0.8, (50, 50, 255), 2)
-                cv2.rectangle(frame, (x, y), (x+w, y+h), (50, 50, 255), 2)
+                cv2.rectangle(frame, (x_start, y_start), (x_end, y_end), (50, 50, 255), 2)
 
             cv2.imshow("Capturing Student Face - Press 'q' to Quit", frame)
             k = cv2.waitKey(1) & 0xFF
@@ -451,6 +470,8 @@ class S2_1(QWidget):
         else:
             with open(FACES_PKL, 'rb') as f:
                 faces = pickle.load(f)
+            if len(faces.shape) == 1:
+                faces = faces.reshape(-1, 7500)
             faces = np.append(faces, faces_data, axis=0)
             with open(FACES_PKL, 'wb') as f:
                 pickle.dump(faces, f)
@@ -474,8 +495,9 @@ class S2_1(QWidget):
 
 
 class ThirdPage(QWidget):
-    def __init__(self):
+    def __init__(self, parent_home=None):
         super(ThirdPage, self).__init__()
+        self.parent_home = parent_home
         self.setWindowTitle("ATTENDANCE SYSTEM - Live Attendance")
         self.setFixedWidth(1000)
         self.setStyleSheet("background: #FFFFFF;")
@@ -485,9 +507,14 @@ class ThirdPage(QWidget):
         self.child_window = None
         self.initUI()
 
+    def closeEvent(self, event):
+        if self.parent_home:
+            self.parent_home.show()
+        event.accept()
+
     def open_home(self):
-        self.child_window = HomePage()
-        self.child_window.show()
+        if self.parent_home:
+            self.parent_home.show()
         self.hide()
 
     def initUI(self):
@@ -505,10 +532,10 @@ class ThirdPage(QWidget):
 
         self.instructions = QLabel(
             "Instructions:\n"
-            "1. Click 'Start Live Attendance' to open camera.\n"
-            "2. Face the camera until your name is recognized.\n"
-            "3. Press 'A' or 'a' on your keyboard to record attendance.\n"
-            "4. Press 'Q' or 'q' to close camera and return."
+            "1. Click 'Start Live Attendance' to launch webcam.\n"
+            "2. Face the camera until your name and roll are detected.\n"
+            "3. Press 'A' or 'a' on keyboard to register attendance with voice alert.\n"
+            "4. Press 'Q' or 'q' to stop attendance and return."
         )
         self.instructions.setFont(QFont('Segoe UI, Bahnschrift, Arial', 13))
         self.instructions.setAlignment(Qt.AlignCenter)
@@ -536,7 +563,6 @@ class ThirdPage(QWidget):
         grid.addWidget(self.btn_home, 4, 0)
 
     def run_live_attendance(self):
-        # Verify required datasets exist
         if not os.path.exists(NAMES_PKL) or not os.path.exists(FACES_PKL):
             QMessageBox.warning(self, "No Data", "Face database is empty! Please register faces first.")
             return
@@ -554,7 +580,10 @@ class ThirdPage(QWidget):
             QMessageBox.warning(self, "No Data", "Face database is empty! Please register faces first.")
             return
 
-        # Build name -> roll mapping
+        min_samples = min(len(LABELS), len(FACES))
+        LABELS = LABELS[:min_samples]
+        FACES = FACES[:min_samples]
+
         name_to_roll = {}
         if os.path.exists(ROLL_PKL):
             try:
@@ -566,7 +595,6 @@ class ThirdPage(QWidget):
             except Exception:
                 pass
 
-        # Also pull from STUDENTS.csv if available
         if os.path.exists(STUDENTS_CSV):
             try:
                 with open(STUDENTS_CSV, 'r', newline='', encoding='utf-8') as f:
@@ -577,7 +605,6 @@ class ThirdPage(QWidget):
             except Exception:
                 pass
 
-        # Train KNN
         n_neighbors = min(5, len(LABELS))
         knn = KNeighborsClassifier(n_neighbors=n_neighbors)
         knn.fit(FACES, LABELS)
@@ -596,8 +623,14 @@ class ThirdPage(QWidget):
             QMessageBox.critical(self, "Error", "Could not open webcam.")
             return
 
+        window_name = "Live Attendance - Face Recognition"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, 1100, 650)
+
         COL_NAMES = ['ROLL NO.', 'NAME', 'TIME']
         attendance = None
+        last_marked_person = None
+        last_marked_time = 0
 
         while True:
             ret, frame = video.read()
@@ -607,9 +640,16 @@ class ThirdPage(QWidget):
             grey = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = facedetect.detectMultiScale(grey, 1.3, 5)
 
-            current_name = None
             for (x, y, w, h) in faces:
-                crop_img = frame[y:y+h, x:x+w, :]
+                y_start = max(0, y)
+                y_end = min(frame.shape[0], y + h)
+                x_start = max(0, x)
+                x_end = min(frame.shape[1], x + w)
+
+                crop_img = frame[y_start:y_end, x_start:x_end, :]
+                if crop_img.size == 0 or crop_img.shape[0] == 0 or crop_img.shape[1] == 0:
+                    continue
+
                 resized_img = cv2.resize(crop_img, (50, 50)).flatten().reshape(1, -1)
                 output = knn.predict(resized_img)
                 current_name = str(output[0])
@@ -617,10 +657,10 @@ class ThirdPage(QWidget):
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 student_roll = str(name_to_roll.get(current_name, "N/A"))
 
-                cv2.rectangle(frame, (x, y), (x+w, y+h), (50, 50, 255), 2)
-                cv2.rectangle(frame, (x, y-40), (x+w, y), (50, 50, 255), -1)
-                cv2.putText(frame, f"{current_name} ({student_roll})", (x, y-15),
-                            cv2.FONT_HERSHEY_COMPLEX, 0.7, (255, 255, 255), 1)
+                cv2.rectangle(frame, (x_start, y_start), (x_end, y_end), (50, 50, 255), 2)
+                cv2.rectangle(frame, (x_start, max(0, y_start - 35)), (x_end, y_start), (50, 50, 255), -1)
+                cv2.putText(frame, f"{current_name} ({student_roll})", (x_start, max(15, y_start - 10)),
+                            cv2.FONT_HERSHEY_COMPLEX, 0.65, (255, 255, 255), 1)
 
                 attendance = [student_roll, current_name, timestamp]
 
@@ -628,14 +668,18 @@ class ThirdPage(QWidget):
             imgBackground = imgBackground_orig.copy()
             if imgBackground.shape[0] >= 642 and imgBackground.shape[1] >= 695:
                 imgBackground[162:162 + 480, 55:55 + 640] = frame_resized
-                cv2.imshow("Live Attendance - Press 'A' to Mark, 'Q' to Quit", imgBackground)
+                cv2.imshow(window_name, imgBackground)
             else:
-                cv2.imshow("Live Attendance - Press 'A' to Mark, 'Q' to Quit", frame)
+                cv2.imshow(window_name, frame)
 
             k = cv2.waitKey(1) & 0xFF
             if k in [ord("a"), ord("A")]:
                 if attendance is None:
                     speak("No face detected")
+                    continue
+
+                now = time.time()
+                if last_marked_person == attendance[1] and (now - last_marked_time) < 2.0:
                     continue
 
                 date_str = datetime.now().strftime("%d-%m-%Y")
@@ -648,8 +692,10 @@ class ThirdPage(QWidget):
                         writer.writerow(COL_NAMES)
                     writer.writerow(attendance)
 
+                last_marked_person = attendance[1]
+                last_marked_time = now
+
                 speak("Attendance Taken..")
-                time.sleep(0.5)
 
             if k in [ord("q"), ord("Q")]:
                 break
@@ -659,8 +705,9 @@ class ThirdPage(QWidget):
 
 
 class FourthPage(QWidget):
-    def __init__(self):
+    def __init__(self, parent_home=None):
         super(FourthPage, self).__init__()
+        self.parent_home = parent_home
         self.setWindowTitle("ATTENDANCE SYSTEM - Select Date")
         self.setFixedWidth(1000)
         self.setStyleSheet("background: #FFFFFF;")
@@ -670,13 +717,18 @@ class FourthPage(QWidget):
         self.child_window = None
         self.initUI()
 
-    def open6(self):
-        self.child_window = CSVOPEN()
+    def closeEvent(self, event):
+        if self.parent_home:
+            self.parent_home.show()
+        event.accept()
+
+    def open6(self, selected_date):
+        self.child_window = CSVOPEN(selected_date=selected_date)
         self.child_window.show()
 
     def open7(self):
-        self.child_window = HomePage()
-        self.child_window.show()
+        if self.parent_home:
+            self.parent_home.show()
         self.hide()
 
     def initUI(self):
@@ -688,15 +740,30 @@ class FourthPage(QWidget):
         self.logo5.setAlignment(Qt.AlignHCenter)
         self.logo5.setStyleSheet("margin-top: 10px;")
 
-        self.l15 = QLabel("Enter Date to View Attendance [DD-MM-YYYY]:")
+        self.l15 = QLabel("Select or Enter Date to View Attendance [DD-MM-YYYY]:")
         self.l15.setFont(QFont('Segoe UI, Bahnschrift, Arial', 14, QFont.Bold))
         self.l15.setAlignment(Qt.AlignCenter)
 
-        self.dAtE = QLineEdit()
-        self.dAtE.setText(datetime.now().strftime("%d-%m-%Y"))
-        self.dAtE.setStyleSheet(
-            "QLineEdit { border: 2px solid #cbad8f; border-radius: 8px; padding: 6px; "
-            "font-size: 15px; margin: 4px 20px; }"
+        # Detect existing attendance dates
+        existing_files = glob.glob(os.path.join(ATTENDANCE_DIR, "Attendance_*.csv"))
+        existing_dates = []
+        for f in existing_files:
+            bname = os.path.basename(f)
+            # Attendance_DD-MM-YYYY.csv
+            d_part = bname.replace("Attendance_", "").replace(".csv", "")
+            if d_part:
+                existing_dates.append(d_part)
+
+        today_str = datetime.now().strftime("%d-%m-%Y")
+        if today_str not in existing_dates:
+            existing_dates.insert(0, today_str)
+
+        self.date_combo = QComboBox()
+        self.date_combo.setEditable(True)
+        self.date_combo.addItems(existing_dates)
+        self.date_combo.setStyleSheet(
+            "QComboBox { border: 2px solid #cbad8f; border-radius: 8px; padding: 6px; "
+            "font-size: 15px; margin: 4px 20px; background: #FFFFFF; }"
         )
 
         btn_style = (
@@ -717,12 +784,12 @@ class FourthPage(QWidget):
 
         grid.addWidget(self.logo5, 0, 0)
         grid.addWidget(self.l15, 1, 0)
-        grid.addWidget(self.dAtE, 2, 0)
+        grid.addWidget(self.date_combo, 2, 0)
         grid.addWidget(self.button8, 3, 0)
         grid.addWidget(self.button9, 4, 0)
 
     def addinfo1(self):
-        date_text = self.dAtE.text().strip()
+        date_text = self.date_combo.currentText().strip()
         if not date_text:
             QMessageBox.warning(self, "Required", "Date is required!")
             return
@@ -730,20 +797,19 @@ class FourthPage(QWidget):
         with open(DATE_CSV, "a", newline="", encoding="utf-8") as temp:
             temp.write(date_text + '\n')
 
-        self.open6()
+        self.open6(date_text)
 
 
 class CSVOPEN(QMainWindow):
-    def __init__(self):
+    def __init__(self, selected_date=None):
         super(CSVOPEN, self).__init__()
         self.setWindowTitle("ATTENDANCE RECORDS")
-        self.resize(800, 500)
+        self.resize(850, 520)
         if os.path.exists(ICON_PATH):
             self.setWindowIcon(QIcon(ICON_PATH))
 
-        # Read last requested date
-        date_val = datetime.now().strftime("%d-%m-%Y")
-        if os.path.exists(DATE_CSV):
+        date_val = selected_date or datetime.now().strftime("%d-%m-%Y")
+        if not selected_date and os.path.exists(DATE_CSV):
             with open(DATE_CSV, mode='r', newline='', encoding='utf-8') as f:
                 dates = [line.strip() for line in f if line.strip()]
                 if dates:
@@ -752,12 +818,17 @@ class CSVOPEN(QMainWindow):
         target_csv = os.path.join(ATTENDANCE_DIR, f"Attendance_{date_val}.csv")
 
         data = []
+        headers = ["ROLL NO.", "NAME", "TIME"]
         if os.path.exists(target_csv):
             with open(target_csv, 'r', newline='', encoding='utf-8') as fh:
                 reader = csv.reader(fh)
                 for rec in reader:
                     if rec:
                         data.append(rec)
+            # Separate header if present
+            if data and data[0] == ["ROLL NO.", "NAME", "TIME"]:
+                headers = data[0]
+                data = data[1:]
         else:
             QMessageBox.information(
                 self, "Not Found",
@@ -768,20 +839,21 @@ class CSVOPEN(QMainWindow):
         layout = QVBoxLayout()
         central_widget.setLayout(layout)
 
-        lbl_header = QLabel(f"Attendance Record for {date_val}")
+        lbl_header = QLabel(f"Attendance Records for {date_val}")
         lbl_header.setFont(QFont('Segoe UI, Bahnschrift, Arial', 14, QFont.Bold))
         lbl_header.setAlignment(Qt.AlignCenter)
         layout.addWidget(lbl_header)
 
         self.table = QTableView()
-        self.model = TableModel(data)
+        self.model = TableModel(data, headers=headers)
         self.table.setModel(self.model)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout.addWidget(self.table)
 
         btn_close = QPushButton("Close")
         btn_close.setStyleSheet(
             "QPushButton { border: 2px solid #cbad8f; border-radius: 8px; font-size: 15px; "
-            "color: #796648; padding: 6px; font-weight: bold; background: #FFFFFF; } "
+            "color: #796648; padding: 8px; font-weight: bold; background: #FFFFFF; } "
             "QPushButton:hover { background: #cbad8f; color: #FFFFFF; }"
         )
         btn_close.clicked.connect(self.close)
@@ -791,9 +863,10 @@ class CSVOPEN(QMainWindow):
 
 
 class TableModel(QAbstractTableModel):
-    def __init__(self, data):
+    def __init__(self, data, headers=None):
         super(TableModel, self).__init__()
         self._data = data
+        self._headers = headers or ["ROLL NO.", "NAME", "TIME"]
 
     def data(self, index, role):
         if role == Qt.DisplayRole:
@@ -801,18 +874,27 @@ class TableModel(QAbstractTableModel):
                 return self._data[index.row()][index.column()]
         return None
 
+    def headerData(self, section, orientation, role):
+        if role == Qt.DisplayRole:
+            if orientation == Qt.Horizontal and section < len(self._headers):
+                return self._headers[section]
+            if orientation == Qt.Vertical:
+                return str(section + 1)
+        return None
+
     def rowCount(self, index=None):
         return len(self._data)
 
     def columnCount(self, index=None):
-        if not self._data:
-            return 0
-        return len(self._data[0])
+        if self._data:
+            return len(self._data[0])
+        return len(self._headers)
 
 
 class FifthPage(QWidget):
-    def __init__(self):
+    def __init__(self, parent_home=None):
         super(FifthPage, self).__init__()
+        self.parent_home = parent_home
         self.setWindowTitle("ATTENDANCE SYSTEM - Developers Info")
         self.setFixedWidth(1000)
         self.setStyleSheet("background: #FFFFFF;")
@@ -822,9 +904,14 @@ class FifthPage(QWidget):
         self.child_window = None
         self.initUI()
 
+    def closeEvent(self, event):
+        if self.parent_home:
+            self.parent_home.show()
+        event.accept()
+
     def open9(self):
-        self.child_window = HomePage()
-        self.child_window.show()
+        if self.parent_home:
+            self.parent_home.show()
         self.hide()
 
     def initUI(self):
@@ -840,28 +927,24 @@ class FifthPage(QWidget):
         l16.setFont(QFont('Segoe UI, Bahnschrift, Arial', 20, QFont.Bold))
         l16.setAlignment(Qt.AlignCenter)
 
-        # Developer 1: Ashutosh Sahu
         ashutosh_img = get_pixmap_or_fallback(os.path.join(FILES_DIR, "Ashutosh.jpeg"), ICON_PATH)
         resized_ashutosh = ashutosh_img.scaled(120, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         logo_ashutosh = QLabel()
         logo_ashutosh.setPixmap(resized_ashutosh)
         logo_ashutosh.setAlignment(Qt.AlignCenter)
 
-        # Developer 2: Sukrut Dusane
         sukrut_img = get_pixmap_or_fallback(os.path.join(FILES_DIR, "Sukrut.jpeg"), ICON_PATH)
         resized_sukrut = sukrut_img.scaled(120, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         logo_sukrut = QLabel()
         logo_sukrut.setPixmap(resized_sukrut)
         logo_sukrut.setAlignment(Qt.AlignCenter)
 
-        # Developer 3: Atharv Shukla
         atharv_img = get_pixmap_or_fallback(os.path.join(FILES_DIR, "Atharv.jpg"), ICON_PATH)
         resized_atharv = atharv_img.scaled(120, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         logo_atharv = QLabel()
         logo_atharv.setPixmap(resized_atharv)
         logo_atharv.setAlignment(Qt.AlignCenter)
 
-        # Developer 4: Samyak Malu
         samyak_img = get_pixmap_or_fallback(os.path.join(FILES_DIR, "Samyak.jpg"), ICON_PATH)
         resized_samyak = samyak_img.scaled(120, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         logo_samyak = QLabel()
